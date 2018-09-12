@@ -5,7 +5,6 @@ defmodule EVM.Operation.System do
     MachineState,
     ExecEnv,
     Address,
-    Stack,
     Operation,
     MessageCall,
     Gas,
@@ -28,71 +27,20 @@ defmodule EVM.Operation.System do
       }) do
     {data, machine_state} = EVM.Memory.read(machine_state, input_offset, input_size)
 
-    account_balance =
-      AccountInterface.get_account_balance(exec_env.account_interface, exec_env.address)
-
-    block_header = BlockInterface.get_block_header(exec_env.block_interface)
-
-    is_allowed =
-      value <= account_balance and exec_env.stack_depth < EVM.Functions.max_stack_depth()
-
-    available_gas =
-      if Configuration.fail_nested_operation_lack_of_gas?(exec_env.config) do
-        machine_state.gas
-      else
-        EVM.Helpers.all_but_one_64th(machine_state.gas)
-      end
-
-    remaining_gas = machine_state.gas - available_gas
+    available_gas = calculate_available_gas(exec_env, machine_state)
 
     {status, {updated_account_interface, n_gas, n_sub_state}} =
-      if is_allowed do
-        {account_interface, _nonce} =
-          AccountInterface.increment_account_nonce(exec_env.account_interface, exec_env.address)
+      create_contract(value, exec_env, available_gas, data)
 
-        n_exec_env = %{exec_env | account_interface: account_interface}
+    new_address = create_contract_address(status, updated_account_interface, exec_env)
 
-        AccountInterface.create_contract(
-          n_exec_env.account_interface,
-          # sender
-          n_exec_env.address,
-          # originator
-          n_exec_env.originator,
-          # available_gas
-          available_gas,
-          # gas_price
-          n_exec_env.gas_price,
-          # endowment
-          value,
-          # init_code
-          data,
-          # stack_depth
-          n_exec_env.stack_depth + 1,
-          # block_header
-          block_header,
-          exec_env.config
-        )
-      else
-        {:error, {exec_env.account_interface, available_gas, SubState.empty()}}
-      end
-
-    # Note if was exception halt or other failure on stack
-    new_address =
-      if status == :ok do
-        nonce = AccountInterface.get_account_nonce(exec_env.account_interface, exec_env.address)
-
-        Address.new(exec_env.address, nonce)
-      else
-        <<0>>
-      end
-
+    remaining_gas = machine_state.gas - available_gas
     new_address_for_machine_state = :binary.decode_unsigned(new_address)
 
-    machine_state = %{
+    machine_state =
       machine_state
-      | stack: Stack.push(machine_state.stack, new_address_for_machine_state),
-        gas: n_gas + remaining_gas
-    }
+      |> MachineState.push_on_stack(new_address_for_machine_state)
+      |> MachineState.set_gas(n_gas + remaining_gas)
 
     exec_env = %{exec_env | account_interface: updated_account_interface}
 
@@ -106,6 +54,67 @@ defmodule EVM.Operation.System do
       exec_env: exec_env,
       sub_state: sub_state
     }
+  end
+
+  defp create_contract_address(:ok, updated_account_interface, exec_env) do
+    nonce = AccountInterface.get_account_nonce(updated_account_interface, exec_env.address)
+
+    Address.new(exec_env.address, nonce)
+  end
+
+  defp create_contract_address(_, _, _), do: <<0>>
+
+  defp calculate_available_gas(exec_env, machine_state) do
+    if Configuration.fail_nested_operation_lack_of_gas?(exec_env.config) do
+      machine_state.gas
+    else
+      EVM.Helpers.all_but_one_64th(machine_state.gas)
+    end
+  end
+
+  defp create_contract(value, exec_env, available_gas, data) do
+    if enough_funds?(exec_env, value) and !stack_overflow?(exec_env) do
+      {account_interface, _nonce} =
+        AccountInterface.increment_account_nonce(exec_env.account_interface, exec_env.address)
+
+      block_header = BlockInterface.get_block_header(exec_env.block_interface)
+
+      n_exec_env = %{exec_env | account_interface: account_interface}
+
+      AccountInterface.create_contract(
+        n_exec_env.account_interface,
+        # sender
+        n_exec_env.address,
+        # originator
+        n_exec_env.originator,
+        # available_gas
+        available_gas,
+        # gas_price
+        n_exec_env.gas_price,
+        # endowment
+        value,
+        # init_code
+        data,
+        # stack_depth
+        n_exec_env.stack_depth + 1,
+        # block_header
+        block_header,
+        exec_env.config
+      )
+    else
+      {:error, {exec_env.account_interface, available_gas, SubState.empty()}}
+    end
+  end
+
+  defp enough_funds?(exec_env, value) do
+    account_balance =
+      AccountInterface.get_account_balance(exec_env.account_interface, exec_env.address)
+
+    value <= account_balance
+  end
+
+  defp stack_overflow?(exec_env) do
+    exec_env.stack_depth >= EVM.Functions.max_stack_depth()
   end
 
   @doc """

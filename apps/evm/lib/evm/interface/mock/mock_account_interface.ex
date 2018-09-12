@@ -92,9 +92,16 @@ defimpl EVM.Interface.AccountInterface, for: EVM.Interface.Mock.MockAccountInter
   @spec increment_account_nonce(EVM.Interface.AccountInterface.t(), EVM.address()) ::
           {EVM.Interface.AccountInterface.t(), integer()}
   def increment_account_nonce(mock_account_interface, address) do
+    account = Map.get(mock_account_interface.account_map, address)
+    new_nonce = account.nonce + 1
+    updated_account = %{account | nonce: new_nonce}
+    account_map = Map.put(mock_account_interface.account_map, address, updated_account)
+
+    updated_interface = %{mock_account_interface | account_map: account_map}
+
     {
-      mock_account_interface,
-      Map.get(mock_account_interface.account_map, address).nonce + 1
+      updated_interface,
+      new_nonce
     }
   end
 

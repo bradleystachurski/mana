@@ -76,6 +76,10 @@ defmodule EVM.MachineState do
     %{machine_state | gas: machine_state.gas + amount}
   end
 
+  def set_gas(machine_state, gas) do
+    %__MODULE__{machine_state | gas: gas}
+  end
+
   @doc """
   After a memory operation, we may have incremented the total number
   of active words. This function takes a memory offset accessed and
@@ -138,5 +142,12 @@ defmodule EVM.MachineState do
     next_postion = ProgramCounter.next(machine_state.program_counter, operation_metadata, inputs)
 
     %{machine_state | program_counter: next_postion}
+  end
+
+  def push_on_stack(machine_state, item_for_stack) do
+    %__MODULE__{
+      machine_state
+      | stack: Stack.push(machine_state.stack, item_for_stack)
+    }
   end
 end

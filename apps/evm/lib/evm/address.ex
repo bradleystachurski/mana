@@ -40,7 +40,7 @@ defmodule EVM.Address do
   """
   @spec new(integer(), integer()) :: binary()
   def new(address, nonce) do
-    [address, nonce]
+    [address, nonce - 1]
     |> ExRLP.encode()
     |> Keccak.kec()
     |> EVM.Helpers.take_n_last_bytes(@size)
